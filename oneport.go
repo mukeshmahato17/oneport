@@ -89,6 +89,16 @@ func New(l net.Listener) *Oneport {
 	}
 }
 
+// Oneport is multiplexer for network connections.
+type Oneport interface {
+	Match(...Matcher) net.Listener
+	MatchWithWriters(...MatchWriter) net.Listener
+	Serve() error
+	Close()
+	HandleError(ErrorHandler)
+	SetReadTimeout()
+}
+
 func (p *Oneport) Match(matchers ...Matcher) net.Listener {
 	mws := matchersToMatcheWriters(matchers)
 	return p.MatchWithWriters(mws...)
@@ -122,9 +132,16 @@ func (p *Oneport) Serve() error {
 }
 
 func (p *Oneport) serve(conn net.Conn, doneChan <-chan struct{}, wg *sync.WaitGroup) {
+	defer wg.Done()
+
 	mconn := newMuxConn(conn)
 	if p.readTimeout > noTimeout {
 		_ = conn.SetReadDeadline(time.Now().Add(p.readTimeout))
+	}
+	for _, sl := range p.sls {
+		for _, s := range sl.ss {
+
+		}
 	}
 
 	for {
