@@ -1,6 +1,8 @@
 package main
 
 import (
+	"errors"
+	"fmt"
 	"io"
 	"net"
 	"sync"
@@ -16,6 +18,37 @@ type MatchWriter func(io.Writer, io.Reader) bool
 // ErrorHandler handles error and returns whether
 // the mux should continue serving the 	listener.
 type ErrorHandler func(error) bool
+
+var _ net.Error = ErrNotMatched{}
+
+// ErrNotMatched is returned whenever a connection is not matched by any of the
+// matchers registered in the multiplexer.
+type ErrNotMatched struct {
+	conn net.Conn
+}
+
+func (e ErrNotMatched) Error() string {
+	return fmt.Sprintf("mux: connection %v is not matched by any matcher", e.conn.RemoteAddr())
+}
+
+// Temporary() implements the net.Error interface.
+func (e ErrNotMatched) Temporary() bool { return true }
+
+// Timeout() implements the net.Error interface.
+func (e ErrNotMatched) Timeout() bool { return false }
+
+type errListenerClosed string
+
+func (e errListenerClosed) Error() string   { return string(e) }
+func (e errListenerClosed) Temporary() bool { return false }
+func (e errListenerClosed) Timeout() bool   { return false }
+
+// ErrListenerClosed is returned from muxListener.Accept() when the
+// underlying listener is closed.
+var ErrListenerClosed = errListenerClosed("mux: listener closed")
+
+// ErrServerClosed is returned from muxListener.Accept() when the server is closed.
+var ErrServerClosed = errors.New("mux: server closed")
 
 // for readibility of readTimeout
 var noTimeout time.Duration
@@ -38,14 +71,21 @@ func matchersToMatcheWriters(matchers []Matcher) []MatchWriter {
 
 type Oneport struct {
 	root        net.Listener
+	bufLen      int64
 	errorh      ErrorHandler
 	sls         []matchersListener
 	readTimeout time.Duration
+	doneChan    chan struct{}
+	mu          sync.Mutex
 }
 
 func New(l net.Listener) *Oneport {
 	return &Oneport{
-		root: l,
+		root:        l,
+		bufLen:      1024,
+		errorh:      func(_ error) bool { return true },
+		doneChan:    make(chan struct{}),
+		readTimeout: noTimeout,
 	}
 }
 
