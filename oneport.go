@@ -108,7 +108,33 @@ func (p *oneport) SetReadTimeout(t time.Duration) {
 }
 
 func (p *oneport) Serve() error {
-	return nil
+	var wg sync.WaitGroup
+
+	defer func() {
+		p.closeDoneChans()
+		wg.Wait()
+
+		for _, sl := range p.sls {
+			close(sl.l.connc)
+			// Drain the connections enqueued for the listener.
+			for c := range sl.l.connc {
+				_ = c.Close()
+			}
+		}
+	}()
+
+	for {
+		conn, err := p.root.Accept()
+		if err != nil {
+			if !p.handleErr(err) {
+				return err
+			}
+			continue
+		}
+
+		wg.Add(1)
+		go p.serve(conn, p.donec, &wg)
+	}
 }
 
 func (p *oneport) serve(conn net.Conn, donec <-chan struct{}, wg *sync.WaitGroup) {
